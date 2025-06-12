@@ -496,4 +496,4 @@ async def delete_file(uuid: str = Query(...)):
         return JSONResponse(content={"detail": f"Delete '{uuid}' Folder."}, status_code=201)
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=7979)
+    uvicorn.run(app, host="0.0.0.0", port=8080)
