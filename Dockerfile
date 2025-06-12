@@ -1,5 +1,5 @@
 # Use a more comprehensive Debian base image
-FROM python/python:3.12.11-bullseye
+FROM python:3.12.11-bullseye
 
 # Set ENV
 ENV PYTHON_VERSION=3.12
