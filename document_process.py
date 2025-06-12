@@ -8,11 +8,11 @@ from urllib.parse import unquote
 
 import uvicorn
 import aiohttp
-import fitz, pymupdf
+import fitz
 import openpyxl
 from bs4 import BeautifulSoup
 from docx import Document
-from fastapi import FastAPI, File, UploadFile, Query, Form
+from fastapi import FastAPI, File, UploadFile, Query, Form, BackgroundTasks
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
@@ -206,7 +206,7 @@ async def pdf_translation(input_pdf, output_pdf, uuid, from_lang="ko", to_lang="
     uuid_folder_path = os.path.join(req_storage_path, uuid)
     os.makedirs(uuid_folder_path, exist_ok=True)
 
-    doc: pymupdf.Document = fitz.open(os.path.join(uuid_folder_path, input_pdf))
+    doc = fitz.open(os.path.join(uuid_folder_path, input_pdf))
     ocg_xref = doc.add_ocg("Translation", on=True)
     detect_lang = from_lang
 
@@ -390,8 +390,8 @@ async def pong():
 
 # [파일 번역 요청] Query문을 이용하여 사용 (format, filename)
 @app.post("/trans_file")
-async def trans_file(uuid: str = Form(...), from_lang: str = Form(...), to_lang: str = Form(...),
-        files: List[UploadFile] = File(...)):
+async def trans_file(background_tasks: BackgroundTasks, uuid: str = Form(...), from_lang: str = Form(...),
+        to_lang: str = Form(...), files: List[UploadFile] = File(...)):
     result = []
     detect_lang = from_lang
 
@@ -399,8 +399,8 @@ async def trans_file(uuid: str = Form(...), from_lang: str = Form(...), to_lang:
 
     for file in files:
         filename = file.filename
-        _, text_format = os.path.splitext(filename)
-        text_format = text_format[1:]
+        _, format = os.path.splitext(filename)
+        format = format[1:]
 
         decoded_filename = unquote(filename)
         uuid_folder_path = os.path.join(req_storage_path, uuid)
@@ -413,26 +413,43 @@ async def trans_file(uuid: str = Form(...), from_lang: str = Form(...), to_lang:
         with open(req_file_path, "wb") as buffer:
             buffer.write(await file.read())
 
+        background_tasks.add_task(run_document_translation, uuid, filename, from_lang, to_lang)
+        """
         detect_lang, output_filename = await run_document_translation(uuid, filename, from_lang, to_lang)
 
         print(f"[DETECT LANGUAGE] req ({from_lang}) -> {detect_lang}")
 
         if detect_lang in valid_lang_list:
             if output_filename is None:
-                result.append({'detect_lang': detect_lang, 'filename': "Error", 'size': "0", 'file': "None",
+                result.append({
+                    'detect_lang': detect_lang,
+                    'filename': "Error",
+                    'size': "0",
+                    'file': "None",
                     'error': "File's ext is not available (av: txt, pdf, docx, pptx, xlsx)"})
             else:
-                translated_file_path = os.path.join(uuid_storage_path, f"{text_format}/{output_filename}")
+                translated_file_path = os.path.join(uuid_storage_path, f"{format}/{output_filename}")
                 translated_file_size = os.path.getsize(translated_file_path)
 
-                result.append({'detect_lang': detect_lang, 'filename': output_filename, 'size': translated_file_size,
-                    'file': f"/download/{uuid}/{output_filename}"})
+                result.append({
+                    'detect_lang': detect_lang,
+                    'filename': output_filename,
+                    'size': translated_file_size,
+                    'file': f"/download/{uuid}/{output_filename}"
+                })
         else:
-            result.append({'detect_lang': detect_lang, 'filename': "Error", 'size': "0", 'file': "None",
-                'error': "Invalid language code request. Please check the detect_lang, or request's language code."})
+            result.append({
+                'detect_lang': detect_lang,
+                'filename': "Error",
+                'size': "0",
+                'file': "None",
+                'error': "Invalid language code request. Please check the detect_lang, or request's language code."
+            })
 
     result = jsonable_encoder(result)
     return JSONResponse(content={"result": result}, status_code=200)
+    """
+    return JSONResponse(content={"task": "processing"}, status_code=200)
 
 
 # [번역된 파일 엔드포인트] API를 호출하여 파일 엔드포인트 접근
@@ -456,7 +473,9 @@ async def check_file(uuid: str = Query(...), filename: str = Query(...)):
     target_file_path = os.path.join(uuid_storage_path, target_file_name)
 
     if os.path.exists(target_file_path):
-        return JSONResponse(content={"exists": True, "path": target_file_path}, status_code=200)
+        target_file_size = os.path.getsize(target_file_path)
+        return JSONResponse(content={"exists": True, "filename": target_file_name, "size": target_file_size},
+                            status_code=200)
     else:
         return JSONResponse(content={"exists": False, "path": "None"}, status_code=404)
 
@@ -471,10 +490,10 @@ async def delete_file(uuid: str = Query(...)):
     for path in [uuid_folder_path, uuid_storage_path]:
         if os.path.exists(path):
             try:
-                shutil.rmtree(path)  # 여기 코드 부분에서 삭제 시도 중에 권한 에러가 날 수 있어요~
+                shutil.rmtree(path) # 여기 코드 부분에서 삭제 시도 중에 권한 에러가 날 수 있어요~
             except Exception as e:
                 return JSONResponse(content={"error": f"Failed to delete {path}: {str(e)}"}, status_code=500)
-    return JSONResponse(content={"detail": f"Delete '{uuid}' Folder."}, status_code=201)
+        return JSONResponse(content={"detail": f"Delete '{uuid}' Folder."}, status_code=201)
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+    uvicorn.run(app, host="0.0.0.0", port=7979)
