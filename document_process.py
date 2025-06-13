@@ -328,7 +328,7 @@ async def check_file(uuid: str = Query(...), filename: str = Query(...)):
             return JSONResponse(content={"exists": True, "filename": quote(target_file_name), "size": target_file_size},
                                 status_code=200)
         else:
-            return JSONResponse(content={"exists": False, "path": "None"}, status_code=404)
+            return JSONResponse(content={"exists": False, "path": "None"}, status_code=200)
 
     except Exception as e:
         return JSONResponse(content={"message": "Internal server error"}, status_code=500)
