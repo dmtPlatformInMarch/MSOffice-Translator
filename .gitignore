@@ -1,6 +1,9 @@
 # Created by https://www.toptal.com/developers/gitignore/api/python,pycharm+all,macos,windows,venv
 # Edit at https://www.toptal.com/developers/gitignore?templates=python,pycharm+all,macos,windows,venv
 
+req_doc/**
+translated/**
+
 ### macOS ###
 # General
 .DS_Store
