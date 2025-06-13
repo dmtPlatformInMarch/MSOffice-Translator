@@ -30,7 +30,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"],  # Allows all origins
 )
 
 textflags = fitz.TEXT_INHIBIT_SPACES | fitz.TEXT_DEHYPHENATE | fitz.TEXT_PRESERVE_WHITESPACE | fitz.TEXT_MEDIABOX_CLIP | fitz.TEXT_CID_FOR_UNKNOWN_UNICODE
-TRANSLATOR_URL = "https://model-nmt.aidmtlabs.com/api/texts/translation"
+TRANSLATOR_URL = "http://dilato-webtrans-nmt-patent:7979"
 req_storage_path = "./req_doc"
 storage_path = "./translated"
 src_lang_list = ["ko", "en"]
