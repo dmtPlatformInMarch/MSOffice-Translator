@@ -30,7 +30,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"],  # Allows all origins
 )
 
 textflags = fitz.TEXT_INHIBIT_SPACES | fitz.TEXT_DEHYPHENATE | fitz.TEXT_PRESERVE_WHITESPACE | fitz.TEXT_MEDIABOX_CLIP | fitz.TEXT_CID_FOR_UNKNOWN_UNICODE
-TRANSLATOR_URL = "http://dilato-webtrans-nmt-patent:7979"
+TRANSLATOR_URL = "http://dilato-webtrans-nmt-patent:7979/translation"
 req_storage_path = "./req_doc"
 storage_path = "./translated"
 src_lang_list = ["ko", "en"]
@@ -328,7 +328,7 @@ async def check_file(uuid: str = Query(...), filename: str = Query(...)):
             return JSONResponse(content={"exists": True, "filename": quote(target_file_name), "size": target_file_size},
                                 status_code=200)
         else:
-            return JSONResponse(content={"exists": False, "path": "None"}, status_code=404)
+            return JSONResponse(content={"exists": False, "path": "None"}, status_code=200)
 
     except Exception as e:
         return JSONResponse(content={"message": "Internal server error"}, status_code=500)
