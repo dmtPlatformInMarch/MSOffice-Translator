@@ -71,7 +71,7 @@ async def translate(text, src, tgt):
         async with aiohttp.ClientSession() as session:
             async with session.post(TRANSLATOR_URL, headers=headers, json=data) as response:
                 resp_json = await response.json()
-                translated_text = resp_json['result']['result']
+                translated_text = resp_json['translation']['result']
                 return translated_text
     except Exception as e:
         print(f"번역요청에서 에러 발생 : [{e}]")
