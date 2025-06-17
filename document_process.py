@@ -11,6 +11,7 @@ import fitz
 import openpyxl
 from bs4 import BeautifulSoup
 from docx import Document
+from docx.table import _Cell
 from fastapi import FastAPI, File, UploadFile, Query, Form, BackgroundTasks
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
@@ -147,6 +148,11 @@ async def html_translation(input_html, output_html, uuid, from_lang="ko", to_lan
 
     return detect_lang, output_html
 
+def only_allowed_chars(text):
+    # 허용 문자: 숫자, _, -, *, %, 공백
+    pattern = r'^[0-9_\-\*\% ]+$'
+    return bool(re.match(pattern, text))
+
 # [DOCX]
 async def docx_translation(input_docx, output_docx, uuid, from_lang="ko", to_lang="en"):
     # uuid
@@ -160,11 +166,26 @@ async def docx_translation(input_docx, output_docx, uuid, from_lang="ko", to_lan
 
     for para in docx.paragraphs:
         for run in para.runs:
-            original_text = run.text
-            if original_text.strip():
-                translated_text = await translate(original_text, from_lang, to_lang)
-                # detect_lang = translated_text["detect_lang"]
-                run.text = translated_text
+            original_text = run.text.strip()
+            if original_text == "" or only_allowed_chars(original_text):
+                continue
+
+            run.text = await translate(original_text, from_lang, to_lang)
+
+    for table in docx.tables:
+        for row in table._tbl.tr_lst:  # lxml element 순회
+            for tc in row.tc_lst:
+                # 병합된 셀 중복 출력 방지
+                if tc.vMerge == 'continue':
+                    continue
+                cell = _Cell(tc, table)
+                text = cell.text.strip()
+
+                if text == "" or only_allowed_chars(text) :
+                    continue
+
+                text = await translate(cell.text, from_lang, to_lang)
+                cell.text = text
 
     docx.save(os.path.join(uuid_storage_path, output_docx))
     return detect_lang, output_docx
