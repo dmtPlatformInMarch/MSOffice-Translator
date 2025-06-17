@@ -255,14 +255,17 @@ async def txt_translation(input_txt, output_txt, uuid, from_lang="ko", to_lang="
     os.makedirs(uuid_storage_path, exist_ok=True)
 
     with open(os.path.join(uuid_folder_path, input_txt), 'r', encoding='utf-8') as file:
-        data = file.read()
+        lines = file.readlines()
 
-    translated_text = await translate(data, from_lang, to_lang)
+    for i in range(len(lines)):
+        text = lines[i].strip()
+        if text == "" or only_allowed_chars(text):
+            continue
 
-    print(f"translated_text : {translated_text}")
+        lines[i] = await translate(text, from_lang, to_lang)
 
-    with open(os.path.join(uuid_storage_path, "txt", output_txt), 'w', encoding='utf-8') as new_file:
-        new_file.write(translated_text)
+    with open(os.path.join(uuid_storage_path, output_txt), 'w', encoding='utf-8') as new_file:
+        new_file.writelines(lines)
 
     detect_lang = None
     return detect_lang, output_txt
