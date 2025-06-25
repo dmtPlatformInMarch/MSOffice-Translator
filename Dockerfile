@@ -28,7 +28,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Expose port 7979, 17979 to the outside world
-EXPOSE 8080
+EXPOSE 6446
 
 # Run the FastAPI app with Uvicorn
 CMD ["python3.12", "document_process.py"]
