@@ -1,42 +1,39 @@
 import os
 import re
 import shutil
-import traceback
 from collections import Counter
 from typing import List
 from urllib.parse import quote, unquote
 import uvicorn
-import aiohttp
 import fitz
 import openpyxl
 from bs4 import BeautifulSoup
-from docx import Document
-from docx.table import _Cell
 from fastapi import FastAPI, File, UploadFile, Query, Form, BackgroundTasks
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from pptx import Presentation
-from apscheduler.schedulers.background import BackgroundScheduler
 from pathlib import Path
+from module import only_allowed_chars
+from docx_translator import docxtrans
+from text_translator import translate
 
 app = FastAPI()
 
-# CORS 설정
-# Add CORS middleware to allow all origins and headers
-# noinspection PyTypeChecker
-app.add_middleware(CORSMiddleware, allow_origins=["*"],  # Allows all origins
-    allow_credentials=False, allow_methods=["*"],  # Allows all HTTP methods
-    allow_headers=["*"],  # Allows all headers
-)
+app.add_middleware(CORSMiddleware,
+                   allow_origins=["*"],
+                   allow_credentials=False,
+                   allow_methods=["*"],
+                   allow_headers=["*"],
+                   )
 
 textflags = fitz.TEXT_INHIBIT_SPACES | fitz.TEXT_DEHYPHENATE | fitz.TEXT_PRESERVE_WHITESPACE | fitz.TEXT_MEDIABOX_CLIP | fitz.TEXT_CID_FOR_UNKNOWN_UNICODE
-TRANSLATOR_URL = "https://model-nmt.aidmtlabs.com/api/texts/translation"
 req_storage_path = "./req_doc"
 storage_path = "./translated"
 src_lang_list = ["ko", "en"]
 tgt_lang_list = ["en", "ko"]
 valid_lang_list = ["ko", "en"]
+
 
 def clean_folders():
     try:
@@ -51,32 +48,12 @@ def clean_folders():
     except Exception as e:
         pass
 
-# 한국시간 새벽 4시에 폴더를 초기화한다.
-scheduler = BackgroundScheduler(daemon=True, timezone='Asia/Seoul')
-scheduler.add_job(clean_folders, 'cron', hour=4, minute=0)
-scheduler.start()
-
 
 # [번역전처리] 문장의 non-character 여부 검사
 def is_character(sentence):
     pattern = r'[가-힣a-zA-Z0-9]'
     return bool(re.search(pattern, sentence))
 
-
-# [번역] source language => target language 번역 API
-async def translate(text, src, tgt):
-    headers = {"Content-Type": "application/json"}
-    data = {"text": text, "from_lang": src, "to_lang": tgt}
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(TRANSLATOR_URL, headers=headers, json=data) as response:
-                resp_json = await response.json()
-                translated_text = resp_json['result']['result']
-                return translated_text
-    except Exception as e:
-        print(f"번역요청에서 에러 발생 : [{e}]")
-        return ""
 
 def extract_text_with_ids(soup):
     text_elements = []
@@ -88,7 +65,8 @@ def extract_text_with_ids(soup):
                 # Assigning a unique ID
                 element_id = f'element_{element_seq}'
                 text_elements.append({'id': element_id, 'original_text': element.string.strip(),
-                    'translated_text': element.string.strip(), 'tag': element.name, 'parent': str(element.parent.name)})
+                                      'translated_text': element.string.strip(), 'tag': element.name,
+                                      'parent': str(element.parent.name)})
                 element.string.replace_with(element_id)
                 element_seq += 1
     return text_elements
@@ -100,6 +78,7 @@ def replace_html_text(soup, sentences):
         if element and element.string and element.string.strip():
             element.string.replace_with(sentence["translated_text"])
     return soup
+
 
 async def parse_html(html_text, from_lang, to_lang):
     detection_list = []
@@ -127,6 +106,7 @@ async def parse_html(html_text, from_lang, to_lang):
 
     return detection_list, html_text
 
+
 # [HTML]
 async def html_translation(input_html, output_html, uuid, from_lang="ko", to_lang="en"):
     # uuid
@@ -149,11 +129,6 @@ async def html_translation(input_html, output_html, uuid, from_lang="ko", to_lan
     return detect_lang, output_html
 
 
-def only_allowed_chars(text):
-    # 허용 문자: 숫자, _, -, *, %, 공백
-    pattern = r'^[0-9_\-\*\% ]+$'
-    return bool(re.match(pattern, text))
-
 # [DOCX]
 async def docx_translation(input_docx, output_docx, uuid, from_lang="ko", to_lang="en"):
     # uuid
@@ -162,34 +137,15 @@ async def docx_translation(input_docx, output_docx, uuid, from_lang="ko", to_lan
     uuid_storage_path = os.path.join(storage_path, uuid)
     os.makedirs(uuid_storage_path, exist_ok=True)
 
-    docx = Document(os.path.join(uuid_folder_path, input_docx))
     detect_lang = from_lang
 
-    for para in docx.paragraphs:
-        for run in para.runs:
-            original_text = run.text.strip()
-            if original_text == "" or only_allowed_chars(original_text):
-                continue
+    await docxtrans(os.path.join(uuid_folder_path, input_docx),
+                    os.path.join(uuid_storage_path, output_docx),
+                    from_lang,
+                    to_lang)
 
-            run.text = await translate(original_text, from_lang, to_lang)
-
-    for table in docx.tables:
-        for row in table._tbl.tr_lst:  # lxml element 순회
-            for tc in row.tc_lst:
-                # 병합된 셀 중복 출력 방지
-                if tc.vMerge == 'continue':
-                    continue
-                cell = _Cell(tc, table)
-                text = cell.text.strip()
-
-                if text == "" or only_allowed_chars(text) :
-                    continue
-
-                text = await translate(cell.text, from_lang, to_lang)
-                cell.text = text
-
-    docx.save(os.path.join(uuid_storage_path, output_docx))
     return detect_lang, output_docx
+
 
 # [PPTX]
 async def pptx_translation(input_pptx, output_pptx, uuid, from_lang="ko", to_lang="en"):
@@ -222,6 +178,7 @@ async def pptx_translation(input_pptx, output_pptx, uuid, from_lang="ko", to_lan
     prs.save(os.path.join(uuid_storage_path, output_pptx))
     return detect_lang, output_pptx
 
+
 # [XLSX]
 async def xlsx_translation(input_xlsx, output_xlsx, uuid, from_lang="ko", to_lang="en"):
     # uuid
@@ -246,6 +203,7 @@ async def xlsx_translation(input_xlsx, output_xlsx, uuid, from_lang="ko", to_lan
 
     return detect_lang, output_xlsx
 
+
 # [TXT]
 async def txt_translation(input_txt, output_txt, uuid, from_lang="ko", to_lang="en"):
     # uuid
@@ -269,6 +227,7 @@ async def txt_translation(input_txt, output_txt, uuid, from_lang="ko", to_lang="
 
     detect_lang = None
     return detect_lang, output_txt
+
 
 # [파일 번역 처리]
 async def run_document_translation(uuid, input_file, src="ko", tgt="en"):
@@ -299,7 +258,7 @@ async def pong():
 # [파일 번역 요청] Query문을 이용하여 사용 (format, filename)
 @app.post("/trans_file")
 async def trans_file(background_tasks: BackgroundTasks, uuid: str = Form(...), from_lang: str = Form(...),
-        to_lang: str = Form(...), files: List[UploadFile] = File(...)):
+                     to_lang: str = Form(...), files: List[UploadFile] = File(...)):
     try:
         for file in files:
             filename = file.filename
@@ -357,6 +316,7 @@ async def check_file(uuid: str = Query(...), filename: str = Query(...)):
 
     except Exception as e:
         return JSONResponse(content={"message": "Internal server error"}, status_code=500)
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=6446)
