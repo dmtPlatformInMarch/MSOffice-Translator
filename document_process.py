@@ -165,12 +165,12 @@ async def docx_translation(input_docx, output_docx, uuid, from_lang="ko", to_lan
     detect_lang = from_lang
 
     for para in docx.paragraphs:
-        for run in para.runs:
-            original_text = run.text.strip()
-            if original_text == "" or only_allowed_chars(original_text):
-                continue
+        original_text = para.text.strip()
 
-            run.text = await translate(original_text, from_lang, to_lang)
+        if original_text == "" or only_allowed_chars(original_text):
+            continue
+
+        para.text = await translate(original_text, from_lang, to_lang)
 
     for table in docx.tables:
         for row in table._tbl.tr_lst:  # lxml element 순회
