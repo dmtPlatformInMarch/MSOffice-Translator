@@ -1,21 +1,27 @@
 import aiohttp
+import requests
 
 TRANSLATOR_URL = "https://model-nmt.aidmtlabs.com/api/texts/translation"
 
-async def translate(text, src, tgt):
+
+def translate(text, src, tgt):
     headers = {"Content-Type": "application/json"}
     data = {"text": text, "from_lang": src, "to_lang": tgt}
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(TRANSLATOR_URL, headers=headers, json=data) as response:
-                resp_json = await response.json()
-                translated_text = resp_json['result']['result']
-                return translated_text
-    except Exception as e:
-        print(f"번역요청에서 에러 발생 : [{e}]")
-        return ""
+        session = requests.Session()
+        response = session.post(
+            TRANSLATOR_URL,
+            headers=headers,
+            json=data,
+        )
 
+        print(f"{response.text}")
+
+        return response.json()['result']['result']
+    except Exception as e:
+        print(f"번역 요청에서 에러가 발생하였습니다 : {e}")
+        return ""
 
 # ======================== 구글번역
 # import unicodedata

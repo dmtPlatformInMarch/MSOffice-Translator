@@ -5,10 +5,9 @@ from collections import Counter
 from typing import List
 from urllib.parse import quote, unquote
 import uvicorn
-import fitz
 import openpyxl
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, File, UploadFile, Query, Form, BackgroundTasks
+from fastapi import FastAPI, File, UploadFile, Query, Form
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
@@ -17,6 +16,9 @@ from pathlib import Path
 from module import only_allowed_chars
 from docx_translator import docxtrans
 from text_translator import translate
+import threading
+from TaskCounter import TaskCounter
+from CustomThread import CustomThread
 
 app = FastAPI()
 
@@ -27,7 +29,6 @@ app.add_middleware(CORSMiddleware,
                    allow_headers=["*"],
                    )
 
-textflags = fitz.TEXT_INHIBIT_SPACES | fitz.TEXT_DEHYPHENATE | fitz.TEXT_PRESERVE_WHITESPACE | fitz.TEXT_MEDIABOX_CLIP | fitz.TEXT_CID_FOR_UNKNOWN_UNICODE
 req_storage_path = "./req_doc"
 storage_path = "./translated"
 src_lang_list = ["ko", "en"]
@@ -80,7 +81,7 @@ def replace_html_text(soup, sentences):
     return soup
 
 
-async def parse_html(html_text, from_lang, to_lang):
+def parse_html(html_text, from_lang, to_lang):
     detection_list = []
     # BeautifulSoup을 사용하여 HTML 파싱
     html_text = html_text.replace("<br/>", " ")
@@ -92,7 +93,7 @@ async def parse_html(html_text, from_lang, to_lang):
     sentences = extract_text_with_ids(soup)
     translation_results = []
     for sentence in sentences:
-        translation_results.append(await translate(sentence, from_lang, to_lang))
+        translation_results.append(translate(sentence, from_lang, to_lang))
 
     if translation_results:
         for i, result in enumerate(translation_results):
@@ -108,144 +109,159 @@ async def parse_html(html_text, from_lang, to_lang):
 
 
 # [HTML]
-async def html_translation(input_html, output_html, uuid, from_lang="ko", to_lang="en"):
-    # uuid
+def html_translation(input_html, output_html, uuid, from_lang="ko", to_lang="en"):
     uuid_folder_path = os.path.join(req_storage_path, uuid)
     os.makedirs(uuid_folder_path, exist_ok=True)
 
     with open(os.path.join(uuid_folder_path, input_html), 'r', encoding='utf-8') as file:
         input_html_data = file.read()
 
-    detection_list, output_html_data = await parse_html(input_html_data, from_lang, to_lang)
+    detection_list, output_html_data = parse_html(input_html_data, from_lang, to_lang)
     print("[DL] : ", detection_list)
     counter = Counter(detection_list)
     print(counter)
     most_common = counter.most_common(1)
-    detect_lang = most_common[0][0]
+    # detect_lang = most_common[0][0]
 
     with open(os.path.join(uuid_folder_path, "html", output_html), 'w', encoding='utf-8') as file:
         file.write(output_html_data)
 
-    return detect_lang, output_html
-
 
 # [DOCX]
-async def docx_translation(input_docx, output_docx, uuid, from_lang="ko", to_lang="en"):
-    # uuid
+def docx_translation(input_docx, output_docx, uuid, from_lang="ko", to_lang="en"):
     uuid_folder_path = os.path.join(req_storage_path, uuid)
     os.makedirs(uuid_folder_path, exist_ok=True)
     uuid_storage_path = os.path.join(storage_path, uuid)
     os.makedirs(uuid_storage_path, exist_ok=True)
 
-    detect_lang = from_lang
-
-    await docxtrans(os.path.join(uuid_folder_path, input_docx),
-                    os.path.join(uuid_storage_path, output_docx),
-                    from_lang,
-                    to_lang)
-
-    return detect_lang, output_docx
+    docxtrans(os.path.join(uuid_folder_path, input_docx),
+              os.path.join(uuid_storage_path, output_docx),
+              from_lang,
+              to_lang,
+              uuid)
 
 
 # [PPTX]
-async def pptx_translation(input_pptx, output_pptx, uuid, from_lang="ko", to_lang="en"):
-    # uuid
+def pptx_translation(input_pptx, output_pptx, uuid, from_lang="ko", to_lang="en"):
     uuid_folder_path = os.path.join(req_storage_path, uuid)
     os.makedirs(uuid_folder_path, exist_ok=True)
     uuid_storage_path = os.path.join(storage_path, uuid)
     os.makedirs(uuid_storage_path, exist_ok=True)
 
     prs = Presentation(os.path.join(uuid_folder_path, input_pptx))
-    detect_lang = from_lang
 
-    for slide in prs.slides:
-        for shape in slide.shapes:
-            # 텍스트를 포함하는 도형 수정
-            if hasattr(shape, "text"):
-                for paragraph in shape.text_frame.paragraphs:
-                    translated_text = await translate(paragraph.text, from_lang, to_lang)
+    try:
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                if TaskCounter.task_dict[uuid]["task"].stop_event.is_set():
+                    raise SystemExit("스레드를 종료합니다.")
 
-                    if paragraph.level > 0:
-                        try:
-                            bullet_style = paragraph.bullet
+                # 텍스트를 포함하는 도형 수정
+                if hasattr(shape, "text"):
+                    for paragraph in shape.text_frame.paragraphs:
+                        if TaskCounter.task_dict[uuid]["task"].stop_event.is_set():
+                            raise SystemExit("스레드를 종료합니다.")
+
+                        translated_text = translate(paragraph.text, from_lang, to_lang)
+
+                        if paragraph.level > 0:
+                            try:
+                                bullet_style = paragraph.bullet
+                                paragraph.text = translated_text
+                                paragraph.bullet = bullet_style
+                            except:
+                                paragraph.text = translated_text
+                        else:
                             paragraph.text = translated_text
-                            paragraph.bullet = bullet_style
-                        except:
-                            paragraph.text = translated_text
-                    else:
-                        paragraph.text = translated_text
 
-    prs.save(os.path.join(uuid_storage_path, output_pptx))
-    return detect_lang, output_pptx
+        prs.save(os.path.join(uuid_storage_path, output_pptx))
+
+    except SystemExit as e:
+        print("번역이 취소되었습니다.")
+    except Exception as e:
+        print("문서번역 중 예상치 못한 에러가 발생했습니다.")
+    finally:
+        del TaskCounter.task_dict[uuid]
 
 
 # [XLSX]
-async def xlsx_translation(input_xlsx, output_xlsx, uuid, from_lang="ko", to_lang="en"):
-    # uuid
+def xlsx_translation(input_xlsx, output_xlsx, uuid, from_lang="ko", to_lang="en"):
     uuid_folder_path = os.path.join(req_storage_path, uuid)
     os.makedirs(uuid_folder_path, exist_ok=True)
     uuid_storage_path = os.path.join(storage_path, uuid)
     os.makedirs(uuid_storage_path, exist_ok=True)
 
-    # Load xlsx sheet
     workbook = openpyxl.load_workbook(os.path.join(uuid_folder_path, input_xlsx))
-    detect_lang = from_lang
 
-    for sheet in workbook.sheetnames:
-        worksheet = workbook[sheet]
-        for row in worksheet.iter_rows():
-            for cell in row:
-                if isinstance(cell.value, str) and cell.value.strip():
-                    translated_text = await translate(cell.value, from_lang, to_lang)
-                    cell.value = translated_text
+    try:
+        for sheet in workbook.sheetnames:
+            worksheet = workbook[sheet]
+            for row in worksheet.iter_rows():
+                for cell in row:
+                    if TaskCounter.task_dict[uuid]["task"].stop_event.is_set():
+                        raise SystemExit("스레드를 종료합니다.")
 
-    workbook.save(os.path.join(uuid_storage_path, output_xlsx))
+                    if isinstance(cell.value, str) and cell.value.strip():
+                        translated_text = translate(cell.value, from_lang, to_lang)
+                        cell.value = translated_text
 
-    return detect_lang, output_xlsx
+        workbook.save(os.path.join(uuid_storage_path, output_xlsx))
+
+    except SystemExit as e:
+        print("번역이 취소되었습니다.")
+    except Exception as e:
+        print("문서번역 중 예상치 못한 에러가 발생했습니다.")
+    finally:
+        del TaskCounter.task_dict[uuid]
 
 
 # [TXT]
-async def txt_translation(input_txt, output_txt, uuid, from_lang="ko", to_lang="en"):
-    # uuid
-    uuid_folder_path = os.path.join(req_storage_path, uuid)
-    os.makedirs(uuid_folder_path, exist_ok=True)
-    uuid_storage_path = os.path.join(storage_path, uuid)
-    os.makedirs(uuid_storage_path, exist_ok=True)
+def txt_translation(input_txt, output_txt, uuid, from_lang="ko", to_lang="en"):
+    try:
+        uuid_folder_path = os.path.join(req_storage_path, uuid)
+        os.makedirs(uuid_folder_path, exist_ok=True)
+        uuid_storage_path = os.path.join(storage_path, uuid)
+        os.makedirs(uuid_storage_path, exist_ok=True)
 
-    with open(os.path.join(uuid_folder_path, input_txt), 'r', encoding='utf-8') as file:
-        lines = file.readlines()
+        with open(os.path.join(uuid_folder_path, input_txt), 'r', encoding='utf-8') as file:
+            lines = file.readlines()
 
-    for i in range(len(lines)):
-        text = lines[i].strip()
-        if text == "" or only_allowed_chars(text):
-            continue
+        for i in range(len(lines)):
+            if TaskCounter.task_dict[uuid]["task"].stop_event.is_set():
+                raise SystemExit("스레드를 종료합니다.")
 
-        lines[i] = await translate(text, from_lang, to_lang)
+            text = lines[i].strip()
+            if text == "" or only_allowed_chars(text):
+                continue
 
-    with open(os.path.join(uuid_storage_path, output_txt), 'w', encoding='utf-8') as new_file:
-        new_file.writelines(lines)
+            lines[i] = translate(text, from_lang, to_lang)
 
-    detect_lang = None
-    return detect_lang, output_txt
+        with open(os.path.join(uuid_storage_path, output_txt), 'w', encoding='utf-8') as new_file:
+            new_file.writelines(lines)
+
+    except SystemExit as e:
+        print("번역이 취소되었습니다.")
+    except Exception as e:
+        print("문서번역 중 예상치 못한 에러가 발생했습니다.")
+    finally:
+        del TaskCounter.task_dict[uuid]
 
 
 # [파일 번역 처리]
-async def run_document_translation(uuid, input_file, src="ko", tgt="en"):
+def run_document_translation(uuid, input_file, src="ko", tgt="en"):
     _, file_ext = os.path.splitext(input_file)
     output_filename = input_file
 
     if file_ext == '.html':
-        return await html_translation(input_file, output_filename, uuid, src, tgt)
+        html_translation(input_file, output_filename, uuid, src, tgt)
     elif file_ext == '.txt':
-        return await txt_translation(input_file, output_filename, uuid, src, tgt)
+        txt_translation(input_file, output_filename, uuid, src, tgt)
     elif file_ext == '.docx':
-        return await docx_translation(input_file, output_filename, uuid, src, tgt)
+        docx_translation(input_file, output_filename, uuid, src, tgt)
     elif file_ext == ".pptx":
-        return await pptx_translation(input_file, output_filename, uuid, src, tgt)
+        pptx_translation(input_file, output_filename, uuid, src, tgt)
     elif file_ext == ".xlsx":
-        return await xlsx_translation(input_file, output_filename, uuid, src, tgt)
-    else:
-        return None
+        xlsx_translation(input_file, output_filename, uuid, src, tgt)
 
 
 # [서버통신확인용]
@@ -257,7 +273,7 @@ async def pong():
 
 # [파일 번역 요청] Query문을 이용하여 사용 (format, filename)
 @app.post("/trans_file")
-async def trans_file(background_tasks: BackgroundTasks, uuid: str = Form(...), from_lang: str = Form(...),
+async def trans_file(uuid: str = Form(...), from_lang: str = Form(...),
                      to_lang: str = Form(...), files: List[UploadFile] = File(...)):
     try:
         for file in files:
@@ -274,7 +290,12 @@ async def trans_file(background_tasks: BackgroundTasks, uuid: str = Form(...), f
             with open(req_file_path, "wb") as buffer:
                 buffer.write(await file.read())
 
-            background_tasks.add_task(run_document_translation, uuid, filename, from_lang, to_lang)
+            TaskCounter.task_dict[uuid] = {"task": None, "counter": None}
+            stop_event = threading.Event()
+            thread = threading.Thread(target=run_document_translation, args=(uuid, filename, from_lang, to_lang),
+                                      daemon=False)
+            thread.start()
+            TaskCounter.task_dict[uuid]["task"] = CustomThread(thread, stop_event)
 
         return JSONResponse(content={"task": "processing"}, status_code=200)
 
@@ -313,6 +334,20 @@ async def check_file(uuid: str = Query(...), filename: str = Query(...)):
                                 status_code=200)
         else:
             return JSONResponse(content={"exists": False, "path": "None"}, status_code=200)
+
+    except Exception as e:
+        return JSONResponse(content={"message": "Internal server error"}, status_code=500)
+
+
+@app.delete("/cancel")
+def cancel_trans(uuid: str):
+    try:
+        task_obj = TaskCounter.task_dict.get(uuid)
+
+        if task_obj:
+            task_obj["task"].stop()
+
+        return JSONResponse(status_code=200, content={"message": "The task has already been completed or deleted."})
 
     except Exception as e:
         return JSONResponse(content={"message": "Internal server error"}, status_code=500)
