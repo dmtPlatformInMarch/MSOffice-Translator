@@ -1,4 +1,3 @@
-import aiohttp
 import requests
 
 TRANSLATOR_URL = "https://model-nmt.aidmtlabs.com/api/texts/translation"

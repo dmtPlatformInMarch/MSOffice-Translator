@@ -4,13 +4,17 @@ from docx import Document
 from docx.table import _Cell
 from TaskCounter import TaskCounter
 
-def docxtrans(input_file_path, output_file_path, from_lang, to_lang, uuid) :
+def docxtrans(input_file_path, output_file_path, from_lang, to_lang, uuid, task_counter) :
     try:
         docx = Document(input_file_path)
+
+        task_counter.total_task_count = len(docx.paragraphs) + len(docx.tables) + 1
 
         for para in docx.paragraphs:
             if TaskCounter.task_dict[uuid]["task"].stop_event.is_set():
                 raise SystemExit("스레드를 종료합니다.")
+
+            task_counter.completed_task_count += 1
 
             original_text = para.text.strip()
 
@@ -21,6 +25,8 @@ def docxtrans(input_file_path, output_file_path, from_lang, to_lang, uuid) :
             para.text = translated_text
 
         for table in docx.tables:
+            task_counter.completed_task_count += 1
+
             for row in table._tbl.tr_lst:  # lxml element 순회
                 for tc in row.tc_lst:
                     if TaskCounter.task_dict[uuid]["task"].stop_event.is_set():
@@ -39,6 +45,8 @@ def docxtrans(input_file_path, output_file_path, from_lang, to_lang, uuid) :
                     cell.text = text
 
         docx.save(output_file_path)
+        task_counter.completed_task_count += 1
+
     except SystemExit as e:
         print("번역이 취소되었습니다.")
     except Exception as e:
