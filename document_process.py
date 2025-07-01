@@ -153,7 +153,7 @@ def only_allowed_chars(text):
     return bool(re.match(pattern, text))
 
 # [DOCX]
-def docx_translation(input_docx, output_docx, uuid, from_lang="ko", to_lang="en"):
+def docx_translation(input_docx, output_docx, uuid, task_counter, from_lang="ko", to_lang="en"):
     try:
         uuid_folder_path = os.path.join(req_storage_path, uuid)
         os.makedirs(uuid_folder_path, exist_ok=True)
@@ -162,9 +162,13 @@ def docx_translation(input_docx, output_docx, uuid, from_lang="ko", to_lang="en"
 
         docx = Document(os.path.join(uuid_folder_path, input_docx))
 
+        task_counter.total_task_count = len(docx.paragraphs) + len(docx.tables) + 1
+
         for para in docx.paragraphs:
             if TaskCounter.task_dict[uuid]["task"].stop_event.is_set():
                 raise SystemExit("스레드를 종료합니다.")
+
+            task_counter.completed_task_count += 1
 
             original_text = para.text.strip()
 
@@ -174,6 +178,8 @@ def docx_translation(input_docx, output_docx, uuid, from_lang="ko", to_lang="en"
             para.text = translate(original_text, from_lang, to_lang)
 
         for table in docx.tables:
+            task_counter.completed_task_count += 1
+
             for row in table._tbl.tr_lst:  # lxml element 순회
                 for tc in row.tc_lst:
                     if TaskCounter.task_dict[uuid]["task"].stop_event.is_set():
@@ -192,6 +198,7 @@ def docx_translation(input_docx, output_docx, uuid, from_lang="ko", to_lang="en"
                     cell.text = text
 
         docx.save(os.path.join(uuid_storage_path, output_docx))
+        task_counter.completed_task_count += 1
 
     except SystemExit as e:
         print("번역이 취소되었습니다.")
@@ -201,7 +208,7 @@ def docx_translation(input_docx, output_docx, uuid, from_lang="ko", to_lang="en"
         del TaskCounter.task_dict[uuid]
 
 # [PPTX]
-def pptx_translation(input_pptx, output_pptx, uuid, from_lang="ko", to_lang="en"):
+def pptx_translation(input_pptx, output_pptx, uuid, task_counter, from_lang="ko", to_lang="en"):
     try:
         uuid_folder_path = os.path.join(req_storage_path, uuid)
         os.makedirs(uuid_folder_path, exist_ok=True)
@@ -210,10 +217,18 @@ def pptx_translation(input_pptx, output_pptx, uuid, from_lang="ko", to_lang="en"
 
         prs = Presentation(os.path.join(uuid_folder_path, input_pptx))
 
+        # 테스크 전체 개수 세기
+        task_counter.total_task_count += 1
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                task_counter.total_task_count += 1
+
         for slide in prs.slides:
             for shape in slide.shapes:
                 if TaskCounter.task_dict[uuid]["task"].stop_event.is_set():
                     raise SystemExit("스레드를 종료합니다.")
+
+                task_counter.completed_task_count += 1
 
                 # 텍스트를 포함하는 도형 수정
                 if hasattr(shape, "text"):
@@ -234,6 +249,7 @@ def pptx_translation(input_pptx, output_pptx, uuid, from_lang="ko", to_lang="en"
                             paragraph.text = translated_text
 
         prs.save(os.path.join(uuid_storage_path, output_pptx))
+        task_counter.completed_task_count += 1
 
     except SystemExit as e:
         print("번역이 취소되었습니다.")
@@ -243,7 +259,7 @@ def pptx_translation(input_pptx, output_pptx, uuid, from_lang="ko", to_lang="en"
         del TaskCounter.task_dict[uuid]
 
 # [XLSX]
-def xlsx_translation(input_xlsx, output_xlsx, uuid, from_lang="ko", to_lang="en"):
+def xlsx_translation(input_xlsx, output_xlsx, uuid, task_counter, from_lang="ko", to_lang="en"):
     try:
         uuid_folder_path = os.path.join(req_storage_path, uuid)
         os.makedirs(uuid_folder_path, exist_ok=True)
@@ -251,6 +267,12 @@ def xlsx_translation(input_xlsx, output_xlsx, uuid, from_lang="ko", to_lang="en"
         os.makedirs(uuid_storage_path, exist_ok=True)
 
         workbook = openpyxl.load_workbook(os.path.join(uuid_folder_path, input_xlsx))
+
+        # 전체 테스크 개수 셈
+        task_counter.total_task_count += 1
+        for sheet in workbook.sheetnames:
+            worksheet = workbook[sheet]
+            task_counter.total_task_count += worksheet.max_column * worksheet.max_row
 
         for sheet in workbook.sheetnames:
             worksheet = workbook[sheet]
@@ -262,7 +284,10 @@ def xlsx_translation(input_xlsx, output_xlsx, uuid, from_lang="ko", to_lang="en"
                     if isinstance(cell.value, str) and cell.value.strip():
                         cell.value = translate(cell.value, from_lang, to_lang)
 
+                    task_counter.completed_task_count += 1
+
         workbook.save(os.path.join(uuid_storage_path, output_xlsx))
+        task_counter.completed_task_count += 1
 
     except SystemExit as e:
         print("번역이 취소되었습니다.")
@@ -272,7 +297,7 @@ def xlsx_translation(input_xlsx, output_xlsx, uuid, from_lang="ko", to_lang="en"
         del TaskCounter.task_dict[uuid]
 
 # [TXT]
-def txt_translation(input_txt, output_txt, uuid, from_lang="ko", to_lang="en"):
+def txt_translation(input_txt, output_txt, uuid, task_counter, from_lang="ko", to_lang="en"):
     try:
         uuid_folder_path = os.path.join(req_storage_path, uuid)
         os.makedirs(uuid_folder_path, exist_ok=True)
@@ -282,9 +307,13 @@ def txt_translation(input_txt, output_txt, uuid, from_lang="ko", to_lang="en"):
         with open(os.path.join(uuid_folder_path, input_txt), 'r', encoding='utf-8') as file:
             lines = file.readlines()
 
+        task_counter.total_task_count = len(lines) + 1
+
         for i in range(len(lines)):
             if TaskCounter.task_dict[uuid]["task"].stop_event.is_set():
                 raise SystemExit("스레드를 종료합니다.")
+
+            task_counter.completed_task_count += 1
 
             text = lines[i].strip()
             if text == "" or only_allowed_chars(text):
@@ -295,6 +324,8 @@ def txt_translation(input_txt, output_txt, uuid, from_lang="ko", to_lang="en"):
         with open(os.path.join(uuid_storage_path, output_txt), 'w', encoding='utf-8') as new_file:
             new_file.writelines(lines)
 
+        task_counter.completed_task_count += 1
+
     except SystemExit as e:
         print("번역이 취소되었습니다.")
     except Exception as e:
@@ -302,32 +333,26 @@ def txt_translation(input_txt, output_txt, uuid, from_lang="ko", to_lang="en"):
     finally:
         del TaskCounter.task_dict[uuid]
 
-
-# [파일 번역 처리]
-def run_document_translation(uuid, input_file, src="ko", tgt="en"):
+def run_document_translation(uuid, input_file, task_counter, src="ko", tgt="en"):
     _, file_ext = os.path.splitext(input_file)
     output_filename = input_file
 
     if file_ext == '.html':
-        html_translation(input_file, output_filename, uuid, src, tgt)
+        html_translation(input_file, output_filename, uuid, task_counter, src, tgt)
     elif file_ext == '.txt':
-        txt_translation(input_file, output_filename, uuid, src, tgt)
+        txt_translation(input_file, output_filename, uuid, task_counter, src, tgt)
     elif file_ext == '.docx':
-        docx_translation(input_file, output_filename, uuid, src, tgt)
+        docx_translation(input_file, output_filename, uuid, task_counter, src, tgt)
     elif file_ext == ".pptx":
-        pptx_translation(input_file, output_filename, uuid, src, tgt)
+        pptx_translation(input_file, output_filename, uuid, task_counter, src, tgt)
     elif file_ext == ".xlsx":
-        xlsx_translation(input_file, output_filename, uuid, src, tgt)
+        xlsx_translation(input_file, output_filename, uuid, task_counter, src, tgt)
 
-
-# [서버통신확인용]
 @app.get("/ping")
 async def pong():
     json_compatible_data = jsonable_encoder({'response': "pong"})
     return JSONResponse(json_compatible_data)
 
-
-# [파일 번역 요청] Query문을 이용하여 사용 (format, filename)
 @app.post("/trans_file")
 async def trans_file(uuid: str = Form(...), from_lang: str = Form(...),
         to_lang: str = Form(...), files: List[UploadFile] = File(...)):
@@ -346,9 +371,10 @@ async def trans_file(uuid: str = Form(...), from_lang: str = Form(...),
             with open(req_file_path, "wb") as buffer:
                 buffer.write(await file.read())
 
-            TaskCounter.task_dict[uuid] = {"task": None, "counter": None}
+            task_counter = TaskCounter()
+            TaskCounter.task_dict[uuid] = {"task": None, "counter": task_counter}
             stop_event = threading.Event()
-            thread = threading.Thread(target=run_document_translation, args=(uuid, filename, from_lang, to_lang), daemon = False)
+            thread = threading.Thread(target=run_document_translation, args=(uuid, filename, task_counter, from_lang, to_lang), daemon = False)
             thread.start()
             TaskCounter.task_dict[uuid]["task"] = CustomThread(thread, stop_event)
 
@@ -357,8 +383,6 @@ async def trans_file(uuid: str = Form(...), from_lang: str = Form(...),
     except Exception as e:
         return JSONResponse(content={"message": "Internal server error"}, status_code=500)
 
-
-# [번역된 파일 엔드포인트] API를 호출하여 파일 엔드포인트 접근
 @app.get("/download/{file_name}")
 async def download_file(file_name: str, uuid: str = Query(...)):
     try:
@@ -374,21 +398,43 @@ async def download_file(file_name: str, uuid: str = Query(...)):
     except Exception as e:
         return JSONResponse(content={"message": "Internal server error"}, status_code=500)
 
-
-# [파일 존재 여부 확인]
-@app.get("/check_file")
-async def check_file(uuid: str = Query(...), filename: str = Query(...)):
+@app.get("/progress")
+def get_progress(uuid: str):
     try:
-        uuid_storage_path = os.path.join(storage_path, uuid)
-        target_file_name = unquote(filename)
-        target_file_path = os.path.join(uuid_storage_path, target_file_name)
+        task_obj = TaskCounter.task_dict.get(uuid)
 
-        if os.path.exists(target_file_path):
-            target_file_size = os.path.getsize(target_file_path)
-            return JSONResponse(content={"exists": True, "filename": quote(target_file_name), "size": target_file_size},
-                                status_code=200)
-        else:
-            return JSONResponse(content={"exists": False, "path": "None"}, status_code=200)
+        if not task_obj:
+            task_obj = {"counter": TaskCounter(-1, -1)}
+        return JSONResponse(status_code=200, content={
+            "data": {"completed_tasks": task_obj["counter"].completed_task_count,
+                     "total_tasks": task_obj["counter"].total_task_count}})
+
+    except Exception as e:
+        return JSONResponse(content={"message": "Internal server error"}, status_code=500)
+
+@app.get("/complete/{filename}")
+def complete(filename: str, uuid: str):
+    filename = unquote(filename)
+
+    try:
+        file_path = Path(os.path.join(os.path.join(storage_path, uuid), filename))
+
+        if not file_path.exists():
+            return JSONResponse(status_code=404, content={"detail": "File not found"})
+
+        file_size = file_path.stat().st_size
+        detect_lang = "nn"
+
+        result = {
+            "data": {
+                "filename": filename,
+                "size": file_size,
+                "detect_lang": detect_lang,
+                "file": f"/download/{quote(filename)}"
+            }
+        }
+
+        return JSONResponse(status_code=200, content=result)
 
     except Exception as e:
         return JSONResponse(content={"message": "Internal server error"}, status_code=500)
